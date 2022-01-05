@@ -7,6 +7,7 @@ contract_id="$contract_addr.nftree"
 tx_sender="S1G2081040G2081040G2081040G208105NK8PE5"
 
 specific_test="$1"
+specific_function="$2"
 
 set -ueo pipefail
 
@@ -55,6 +56,9 @@ for contract_test in $(ls ./test-*.clar); do
    testname=""
    for i in $(seq 1 $#); do
       eval "test_name=$(echo "\$""$i")"
+      if [ -n "$specific_function" ] && [ "$test_name" != "$specific_function" ]; then
+         continue;
+      fi
       run_test "$test_name" "$test_dir"
    done
 done
