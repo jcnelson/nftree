@@ -1,6 +1,7 @@
 (define-public (list-tests)
     (begin
         (print "test: unit-tests")
+        (print "test: unit-tests-2")
         (ok true)
     )
 )
@@ -171,17 +172,17 @@
     )
 )
 
-(define-private (make-merkle-tree-8)
+(define-private (make-merkle-tree-8 (prefix (buff 8)))
     (let (
         (nft-descs (list
-            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-            0x11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
-            0x22222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222
-            0x33333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333
-            0x44444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444
-            0x55555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-            0x66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
-            0x77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777
+            (concat prefix 0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)
+            (concat prefix 0x1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111)
+            (concat prefix 0x2222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222)
+            (concat prefix 0x3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333)
+            (concat prefix 0x4444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444)
+            (concat prefix 0x5555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555)
+            (concat prefix 0x6666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666)
+            (concat prefix 0x7777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777)
         ))
         (row-0 (map sha512/256 nft-descs))
         (row-1 (list
@@ -196,6 +197,7 @@
         ))
         (root (sha512/256 (concat (unwrap-panic (element-at row-2 u0)) (unwrap-panic (element-at row-2 u1)))))
     )
+        (unwrap-panic (if (is-eq (len prefix) u8) (ok true) (err u0)))
         { root: root, nft-descs: nft-descs, rows: (list row-0 row-1 row-2 (list root)) }
     )
 )
@@ -243,7 +245,7 @@
 
 (define-private (test-merkle-proof-root)
     (let (
-        (merkle-tree (make-merkle-tree-8))
+        (merkle-tree (make-merkle-tree-8 0x0000000000000000))
         (nft-descs (get nft-descs merkle-tree))
         (root (get root merkle-tree))
         (rows (get rows merkle-tree))
@@ -435,7 +437,7 @@
 
 (define-private (test-inner-can-claim-nft)
     (let (
-        (merkle-tree (make-merkle-tree-8))
+        (merkle-tree (make-merkle-tree-8 0x0000000000000000))
         (nft-descs (get nft-descs merkle-tree))
         (root (get root merkle-tree))
         (rows (get rows merkle-tree))
@@ -517,7 +519,7 @@
 
         ;; should succeed now
         (asserts! (is-eq
-            (ok { tickets: u22685491128062564230891640495451214097, data-hash: 0x1111111111111111111111111111111111111111111111111111111111111111, size: u22685491128062564230891640495451214097 })
+            (ok { tickets: u22685491128062564230891640495451214097, data-hash: 0x0000000000000000111111111111111111111111111111111111111111111111, size: u22685491128062564230891640495451214097 })
             (inner-can-claim-nft? nft-desc-1 'SP1W2XXGVPYH4J1380KRRP631424VX8VCCRSJ3H6S parent-nft-id nft-proof-1 block-height))
             (err u4)
         )
@@ -612,7 +614,7 @@
         )
     )
 
-        (print "run put-owner-lockup-at-cycle")
+        (print "run test-put-owner-lockup-at-cycle")
 
         (put-owner-lockup-at-cycle u0 { owner: owner-1, start-cyc: cyc, num-cycs: u1, nft-tickets: u23 })
 
@@ -1068,6 +1070,635 @@
     )
 )
 
+(define-private (test-inner-can-submit-buy-offer)
+    (let (
+        (owner-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+        (miner-1 'SP1W2XXGVPYH4J1380KRRP631424VX8VCCRSJ3H6S)
+
+        (nft-desc-1 0x11111111111111111111111111111111111111111111111111111111111111130000000000000000000000000000000100000000000000000000000000000002)
+    )
+        (print "run test-inner-can-submit-buy-offer")
+
+        ;; can't back-date
+        (asserts! (is-eq
+                    (err ERR_INVALID_BUY_EXPIRE)
+                    (inner-can-submit-buy-offer nft-desc-1 owner-1 u1 u100 u101)
+                  )
+            (err u1)
+        )
+
+        ;; buyer must have the uSTX 
+        (asserts! (is-eq
+                    (err ERR_INSUFFICIENT_BALANCE)
+                    (inner-can-submit-buy-offer nft-desc-1 owner-1 u10000000 u101 u100)
+                  )
+            (err u2)
+        )
+
+        ;; offer accepted!
+        (asserts! (is-ok
+                    (inner-can-submit-buy-offer nft-desc-1 owner-1 u1 u101 u100)
+                  )
+            (err u3)
+        )
+
+        ;; can't submit the same amount -- must give a better offer
+        (map-set nft-buy-offers nft-desc-1 { buyer: miner-1, amount-ustx: u1, expires: u101 })
+        (asserts! (is-eq
+                    (err ERR_BAD_OFFER)
+                    (inner-can-submit-buy-offer nft-desc-1 owner-1 u1 u101 u100)
+                  )
+            (err u4)
+        )
+
+        ;; giving a better offer works
+        (asserts! (is-ok
+                    (inner-can-submit-buy-offer nft-desc-1 owner-1 u2 u101 u100)
+                  )
+            (err u5)
+        )
+
+        ;; can overwrite an expired offer
+        (map-set nft-buy-offers nft-desc-1 { buyer: miner-1, amount-ustx: u1, expires: u100 })
+        (asserts! (is-ok
+                    (inner-can-submit-buy-offer nft-desc-1 owner-1 u1 u101 u100)
+                  )
+            (err u6)
+        )
+
+        ;; clean up
+        (map-delete nft-buy-offers nft-desc-1)
+        (ok true)
+    )
+)
+
+(define-private (test-inner-submit-buy-offer)
+    (let (
+        (owner-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+        (miner-1 'SP1W2XXGVPYH4J1380KRRP631424VX8VCCRSJ3H6S)
+
+        (nft-desc-1 0x11111111111111111111111111111111111111111111111111111111111111130000000000000000000000000000000100000000000000000000000000000004)
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+        (saved-tx-sender tx-sender)
+    )
+        (print "run test-inner-submit-buy-offer")
+
+        ;; submit the buy offer from owner-1.
+        ;; there's no prior offer.
+        (asserts! (is-none (map-get? nft-buy-offers nft-desc-1))
+            (err u0)
+        )
+       
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u101 none u100))
+
+        ;; took possession
+        (asserts! (is-eq (- tx-sender-stx-before u10) (stx-get-balance tx-sender))
+            (err u1)
+        )
+        (asserts! (is-eq (+ contract-stx-before u10) (stx-get-balance (as-contract tx-sender)))
+            (err u2)
+        )
+
+        ;; new buy offer exists for tx-sender
+        (asserts! (is-eq
+                (some { buyer: tx-sender, amount-ustx: u10, expires: u101 })
+                (map-get? nft-buy-offers nft-desc-1))
+            (err u3)
+        )
+
+        ;; replace with a better buy offer
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u11 u101 (some { buyer: tx-sender, amount-ustx: u10, expires: u101 }) u100))
+        
+        ;; new buy offer exists for tx-sender
+        (asserts! (is-eq
+                (some { buyer: tx-sender, amount-ustx: u11, expires: u101 })
+                (map-get? nft-buy-offers nft-desc-1))
+            (err u4)
+        )
+
+        ;; tx-sender gets their money back from their original offer -- they've only committed u11 uSTX, not u11 + u10 uSTX
+        (asserts! (is-eq (- tx-sender-stx-before u11) (stx-get-balance tx-sender))
+            (err u5)
+        )
+
+        ;; revert
+        (map-delete nft-buy-offers nft-desc-1)
+        (unwrap-panic (as-contract (stx-transfer? u11 tx-sender saved-tx-sender)))
+        (asserts! (is-eq tx-sender-stx-before (stx-get-balance tx-sender))
+            (err u70)
+        )
+        (asserts! (is-eq contract-stx-before (stx-get-balance (as-contract tx-sender)))
+            (err u7)
+        )
+
+        (ok true)
+    )
+)
+
+(define-private (test-inner-can-reclaim-buy-offer)
+    (let (
+        (owner-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+
+        (nft-desc-1 0x11111111111111111111111111111111111111111111111111111111111111130000000000000000000000000000000100000000000000000000000000000005)
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+        (saved-tx-sender tx-sender)
+    )
+        (print "run test-inner-can-reclaim-buy-offer")
+
+        ;; can't reclaim a nonexistant buy offer
+        (asserts! (is-eq
+                    (err ERR_NO_SUCH_NFT)
+                    (inner-can-reclaim-buy-offer nft-desc-1 tx-sender u101)
+                  )
+            (err u0)
+        )
+
+        ;; add a buy offer that expires in block 101 (while we're in block 100)
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u101 none u100))
+
+        ;; only the buyer can try to reclaim
+        (asserts! (is-eq
+                    (err ERR_PERMISSION_DENIED)
+                    (inner-can-reclaim-buy-offer nft-desc-1 owner-1 u101)
+                  )
+            (err u1)
+        )
+
+        ;; buy offer must have expired
+        (asserts! (is-eq
+                    (err ERR_INVALID_BUY_EXPIRE)
+                    (inner-can-reclaim-buy-offer nft-desc-1 tx-sender u100)
+                  )
+            (err u2)
+        )
+
+        ;; check edge case
+        (asserts! (is-ok
+                    (inner-can-reclaim-buy-offer nft-desc-1 tx-sender u101)
+                  )
+            (err u3)
+        )
+
+        ;; clean up
+        (map-delete nft-buy-offers nft-desc-1)
+        (unwrap-panic (as-contract (stx-transfer? u10 tx-sender saved-tx-sender)))
+        (asserts! (is-eq tx-sender-stx-before (stx-get-balance tx-sender))
+            (err u70)
+        )
+        (asserts! (is-eq contract-stx-before (stx-get-balance (as-contract tx-sender)))
+            (err u7)
+        )
+
+        (ok true)
+    )
+)
+
+(define-private (test-inner-reclaim-buy-offer)
+    (let (
+        (owner-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+
+        (nft-desc-1 0x11111111111111111111111111111111111111111111111111111111111111140000000000000000000000000000000100000000000000000000000000000005)
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+        (saved-tx-sender tx-sender)
+    )
+        (print "run test-inner-reclaim-buy-offer")
+    
+        ;; add a buy offer that expires in block 101 (while we're in block 100)
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u101 none u100))
+
+        ;; reclaim it 
+        (unwrap-panic (inner-reclaim-buy-offer nft-desc-1 { buyer: tx-sender, amount-ustx: u10, expires: u100 }))
+
+        ;; verify that it cleaned up:
+        ;; no more buy offer
+        (asserts! (is-none (map-get? nft-buy-offers nft-desc-1))
+            (err u0)
+        )
+
+        ;; ustx restored
+        (asserts! (is-eq tx-sender-stx-before (stx-get-balance tx-sender))
+            (err u70)
+        )
+        (asserts! (is-eq contract-stx-before (stx-get-balance (as-contract tx-sender)))
+            (err u7)
+        )
+
+        (ok true)
+    )
+)
+
+(define-private (test-inner-can-fulfill-buy-offer)
+    (let (
+        (buyer-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+
+        ;; NOTE: this is 0 tickets, because for some reason, we trigger a runtime panic in the `stacker` crate on musl libc
+        (nft-desc-1 0x11111111111111111111111111111111111111111111111111111111111111130000000000000000000000000000000100000000000000000000000000000000)
+        (nft-rec-1 (unwrap-panic (parse-nft-desc nft-desc-1)))
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+        (saved-tx-sender tx-sender)
+    )
+        (print "run test-inner-can-fulfill-buy-offer")
+
+        ;; NFT in the nft-desc-1 doesn't exist yet, so this should fail
+        (asserts! (is-eq
+                    (err ERR_NO_SUCH_NFT)
+                    (inner-can-fulfill-buy-offer? nft-desc-1 tx-sender u100)
+                  )
+            (err u0)
+        )
+
+        ;; make that NFT, and give it to tx-sender
+        (unwrap-panic (inner-instantiate-nft nft-rec-1 tx-sender))
+
+        ;; no buy offer yet, so this must fail
+        (asserts! (is-eq
+                    (err ERR_NO_BUY_OFFER)
+                    (inner-can-fulfill-buy-offer? nft-desc-1 tx-sender u100)
+                  )
+            (err u1)
+        )
+    
+        ;; add a buy offer from tx-sender that expires in block 102 (while we're in block 100)
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u102 none u100))
+
+        ;; we can't fulfill an expired buy offer
+        (asserts! (is-eq
+                    (err ERR_NO_BUY_OFFER)
+                    (inner-can-fulfill-buy-offer? nft-desc-1 tx-sender u102)
+                  )
+            (err u2)
+        )
+
+        ;; only the owner can fulfill this
+        (asserts! (is-eq
+                    (err ERR_PERMISSION_DENIED)
+                    (inner-can-fulfill-buy-offer? nft-desc-1 buyer-1 u101)
+                  )
+            (err u3)
+        )
+
+        ;; the buy offer can't be fulfilled if the NFT is stacked
+        ;; simulate an NFT lockup
+        (map-set nft-lockups (unwrap-panic (map-get? claimed-nfts nft-rec-1)) u101)
+        (asserts! (is-eq
+                    (err ERR_PERMISSION_DENIED)
+                    (inner-can-fulfill-buy-offer? nft-desc-1 tx-sender u100) 
+                  )
+            (err u4)
+        )
+
+        ;; would work in a later block though
+        (asserts! (is-ok (inner-can-fulfill-buy-offer? nft-desc-1 tx-sender u101))
+            (err u5)
+        )
+
+        ;; clean up
+        (map-delete nft-lockups (unwrap-panic (map-get? claimed-nfts nft-rec-1)))
+        (unwrap-panic (inner-reclaim-buy-offer nft-desc-1 { buyer: tx-sender, amount-ustx: u10, expires: u102 }))
+
+        ;; no more buy offer
+        (asserts! (is-none (map-get? nft-buy-offers nft-desc-1))
+            (err u71)
+        )
+
+        ;; ustx restored
+        (asserts! (is-eq tx-sender-stx-before (stx-get-balance tx-sender))
+            (err u70)
+        )
+        (asserts! (is-eq contract-stx-before (stx-get-balance (as-contract tx-sender)))
+            (err u7)
+        )
+        
+        (ok true)
+    )
+)
+
+(define-private (test-inner-fulfill-buy-offer)
+    (let (
+        (seller-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+
+        ;; NOTE: this is 0 tickets, because for some reason, we trigger a runtime panic in the `stacker` crate on musl libc
+        (nft-desc-1 0x11111111111111111111111111111111111111111111111111111111111111150000000000000000000000000000000100000000000000000000000000000000)
+        (nft-rec-1 (unwrap-panic (parse-nft-desc nft-desc-1)))
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+        (saved-tx-sender tx-sender)
+        (seller-1-stx-before (stx-get-balance seller-1))
+    )
+        (print "run test-inner-fulfill-buy-offer")
+
+        ;; make that NFT, and give it to seller-1
+        (unwrap-panic (inner-instantiate-nft nft-rec-1 seller-1))
+        
+        ;; seller owns the NFT
+        (asserts! (is-eq (nft-get-owner? nftree (unwrap-panic (map-get? claimed-nfts nft-rec-1))) (some seller-1))
+            (err u10)
+        )
+
+        ;; add a buy offer from tx-sender that expires in block 102 (while we're in block 100)
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u102 none u100))
+
+        (unwrap-panic
+            (inner-fulfill-buy-offer
+                (unwrap-panic (map-get? claimed-nfts nft-rec-1))
+                nft-desc-1
+                (unwrap-panic (map-get? nft-buy-offers nft-desc-1))
+                seller-1
+            )
+        )
+
+        ;; seller gets u10 ustx
+        (asserts! (is-eq (+ u10 seller-1-stx-before) (stx-get-balance seller-1))
+            (err u0)
+        )
+
+        ;; seller does not own the NFT; tx-sender does
+        (asserts! (is-eq (nft-get-owner? nftree (unwrap-panic (map-get? claimed-nfts nft-rec-1))) (some tx-sender))
+            (err u1)
+        )
+
+        ;; no more buy offer
+        (asserts! (is-none (map-get? nft-buy-offers nft-desc-1))
+            (err u71)
+        )
+
+        ;; tx-sender is out u10 ustx
+        (asserts! (is-eq (- tx-sender-stx-before u10) (stx-get-balance tx-sender))
+            (err u72)
+        )
+
+        ;; ustx quantity preserved in contract
+        (asserts! (is-eq contract-stx-before (stx-get-balance (as-contract tx-sender)))
+            (err u7)
+        )
+
+        (ok true)
+    )
+)
+
+(define-private (test-inner-can-fulfill-mine-order)
+    (let (
+        (miner-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+        (merkle-tree (make-merkle-tree-8 0x0000000000000002))
+        (nft-descs (get nft-descs merkle-tree))
+        (nft-desc-1 (unwrap-panic (element-at nft-descs u0)))
+        (nft-rec-1 (unwrap-panic (parse-nft-desc nft-desc-1)))
+        (nft-id-1 (unwrap-panic (inner-register-nftree nft-rec-1 miner-1)))
+
+        (root (get root merkle-tree))
+        (rows (get rows merkle-tree))
+
+        (nft-proof-1
+            { hashes: (list
+                (get-sibling-hash rows u0 u1)
+                (get-sibling-hash rows u1 u1)
+                (get-sibling-hash rows u2 u1)
+              ),
+              index: u0
+            }
+        )
+
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+        (saved-tx-sender tx-sender)
+        (miner-1-stx-before (stx-get-balance miner-1))
+
+        ;; create parent to tx-sender
+        (parent-nft-id (unwrap-panic (inner-register-nftree { tickets: u21, data-hash: root, size: u21 } tx-sender)))
+    )
+        (print "run test-inner-can-fulfill-mine-order")
+
+        ;; fails without a buy offer
+        (asserts! (is-eq
+                    (err ERR_NO_BUY_OFFER)
+                    (inner-can-fulfill-mine-order nft-desc-1 miner-1 parent-nft-id nft-proof-1 u100)
+                  )
+            (err u0)
+        )
+
+        ;; make a buy offer for the first NFT from tx-sender
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u101 none u100))
+
+        ;; should succeed with correct data
+        ;; (note: the implementation uses inner-can-claim-nft?, which is already tested above)
+        (asserts! (is-eq
+                    (ok { buy-offer: { buyer: tx-sender, amount-ustx: u10, expires: u101 }, nft-rec: nft-rec-1 })
+                    (inner-can-fulfill-mine-order nft-desc-1 miner-1 parent-nft-id nft-proof-1 u100)
+                  )
+            (err u1)
+        )
+
+        (ok true)
+    )
+)
+
+(define-private (test-inner-fulfill-mine-order)
+    (let ( 
+        (miner-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+        (merkle-tree (make-merkle-tree-8 0x0000000000000003))
+        (nft-descs (get nft-descs merkle-tree))
+        (nft-desc-1 (unwrap-panic (element-at nft-descs u0)))
+        (nft-rec-1 (unwrap-panic (parse-nft-desc nft-desc-1)))
+        (nft-id-1 (unwrap-panic (inner-register-nftree nft-rec-1 miner-1)))
+
+        (root (get root merkle-tree))
+        (rows (get rows merkle-tree))
+
+        (nft-proof-1
+            { hashes: (list
+                (get-sibling-hash rows u0 u1)
+                (get-sibling-hash rows u1 u1)
+                (get-sibling-hash rows u2 u1)
+              ),
+              index: u0
+            }
+        )
+
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+        (saved-tx-sender tx-sender)
+        (miner-1-stx-before (stx-get-balance miner-1))
+
+        ;; create parent to tx-sender
+        (parent-nft-id (unwrap-panic (inner-register-nftree { tickets: u21, data-hash: root, size: u21 } tx-sender)))
+    )
+        (print "run test-inner-fulfill-mine-order")
+
+        ;; make a buy offer for the first NFT from tx-sender
+        (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u101 none u100))
+
+        (let (
+            (nft-id (unwrap-panic (inner-fulfill-mine-order nft-desc-1 nft-rec-1 (unwrap-panic (map-get? nft-buy-offers nft-desc-1)) miner-1)))
+        )
+
+            ;; NFT exists now, and it belongs to tx-sender
+            (asserts! (is-eq (nft-get-owner? nftree nft-id) (some tx-sender))
+                (err u0)
+            )
+        )
+
+        ;; tx-sender spent the cost of the NFT
+        (asserts! (is-eq (stx-get-balance tx-sender) (- tx-sender-stx-before u10))
+            (err u1)
+        )
+
+        ;; contract holds the same amount of ustx
+        (asserts! (is-eq (stx-get-balance (as-contract tx-sender)) contract-stx-before)
+            (err u2)
+        )
+
+        ;; no more buy offer
+        (asserts! (is-none (map-get? nft-buy-offers nft-desc-1))
+            (err u3)
+        )
+
+        (ok true)
+    )
+)
+
+(define-private (test-inner-add-miner-to-block-multi)
+    (let (
+        (tx-sender-stx-before (stx-get-balance tx-sender))
+        (contract-stx-before (stx-get-balance (as-contract tx-sender)))
+    )
+        (print "run test-inner-add-miner-to-block-multi")
+
+        ;; must have sufficient balance
+        (asserts! (is-eq
+                    (err ERR_INSUFFICIENT_BALANCE)
+                    (inner-add-miner-to-block-multi tx-sender-stx-before u2 tx-sender u10000)
+                  )
+            (err u0)
+        )
+
+        ;; valid num-blocks
+        (asserts! (is-eq
+                    (err ERR_INVALID_NUM_BLOCKS)
+                    (inner-add-miner-to-block-multi u1 u0 tx-sender u10000)
+                  )
+            (err u2)
+        )
+        (asserts! (is-eq
+                    (err ERR_INVALID_NUM_BLOCKS)
+                    (inner-add-miner-to-block-multi u1 (+ u1 MAX_MINE_BLOCKS) tx-sender u10000)
+                  )
+            (err u2)
+        )
+
+        ;; valid uSTX
+        (asserts! (is-eq
+                    (err ERR_INVALID_USTX)
+                    (inner-add-miner-to-block-multi u0 u1 tx-sender u10000)
+                  )
+            (err u3)
+        )
+
+        ;; should work
+        (unwrap-panic (inner-add-miner-to-block-multi u12 u10 tx-sender u10000))
+
+        (asserts! (is-eq
+                    none
+                    (map-get? miners-at-block { block: u10000, miner: tx-sender })
+                  )
+            (err u40)
+        )
+        (asserts! (is-eq
+                    (some { range-start: u0, range-end: u12, claimed: false })
+                    (map-get? miners-at-block { block: u10001, miner: tx-sender })
+                  )
+            (err u4)
+        )
+        (asserts! (is-eq
+                    (some { range-start: u0, range-end: u12, claimed: false })
+                    (map-get? miners-at-block { block: u10005, miner: tx-sender })
+                  )
+            (err u5)
+        )
+        (asserts! (is-eq
+                    (some { range-start: u0, range-end: u12, claimed: false })
+                    (map-get? miners-at-block { block: u10010, miner: tx-sender })
+                  )
+            (err u6)
+        )
+        (asserts! (is-eq
+                    none
+                    (map-get? miners-at-block { block: u10011, miner: tx-sender })
+                  )
+            (err u7)
+        )
+
+        (asserts! (is-eq
+                    (some { tickets: u0, ustx: u12 })
+                    (map-get? cycle-lockups (blk-to-cyc u10000))
+                  )
+            (err u80)
+        )
+        (asserts! (is-eq
+                    (some { tickets: u0, ustx: u60 })
+                    (map-get? cycle-lockups (+ u1 (blk-to-cyc u10000)))
+                  )
+            (err u8)
+        )
+        (asserts! (is-eq
+                    (some { tickets: u0, ustx: u48 })
+                    (map-get? cycle-lockups (+ u2 (blk-to-cyc u10000)))
+                  )
+            (err u9)
+        )
+        (asserts! (is-eq
+                    none
+                    (map-get? cycle-lockups (+ u3 (blk-to-cyc u10000)))
+                  )
+            (err u10)
+        )
+
+        (ok true)
+    )
+) 
+
+(define-private (test-buff32-to-string-ascii)
+    (begin
+        (print "run test-buff32-to-string-ascii")
+        (asserts! (is-eq
+                    "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447"
+                    (buff32-to-string-ascii 0xa948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447)
+                  )
+            (err u0)
+        )
+        (ok true)
+    )
+)
+
+(define-private (test-get-token-url)
+    (let (
+        (seller-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+
+        (nft-desc-1 0x11111111111111111111111111111111111111111111111111111111111111160000000000000000000000000000000100000000000000000000000000000000)
+        (nft-rec-1 (unwrap-panic (parse-nft-desc nft-desc-1)))
+        (nft-id-1 (unwrap-panic (inner-instantiate-nft nft-rec-1 seller-1)))
+    )
+        (print "run test-get-token-url")
+
+        (asserts! (is-eq
+                    (ok (some "https://nftrees.com/nfts/1111111111111111111111111111111111111111111111111111111111111116"))
+                    (get-token-url nft-id-1)
+                  )
+            (err u0)
+        )
+        (asserts! (is-eq
+                    (ok none)
+                    (get-token-url (+ u1 nft-id-1))
+                  )
+            (err u1)
+        )
+
+        (ok true)
+    )
+)
 
 (define-public (unit-tests)
     (begin
@@ -1089,7 +1720,26 @@
         (try! (test-inner-stacking-totals))
         (try! (test-inner-can-claim-stacking-rewards))
         (try! (test-inner-claim-stacking-rewards))
+        (try! (test-inner-can-submit-buy-offer))
+        (try! (test-inner-submit-buy-offer))
+        (try! (test-inner-can-reclaim-buy-offer))
+        (try! (test-inner-reclaim-buy-offer))
+        (try! (test-inner-can-fulfill-buy-offer))
+        (try! (test-inner-fulfill-buy-offer))
         (print "all unit tests pass")
+        (ok u0)
+    )
+)
+
+;; out of execution space in unit-test, so overflow to unit-tests-2
+(define-public (unit-tests-2)
+    (begin
+        (try! (test-inner-can-fulfill-mine-order))
+        (try! (test-inner-fulfill-mine-order))
+        (try! (test-inner-add-miner-to-block-multi))
+        (try! (test-buff32-to-string-ascii))
+        (try! (test-get-token-url))
+        (print "all unit tests 2 pass")
         (ok u0)
     )
 )
