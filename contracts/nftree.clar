@@ -19,13 +19,22 @@
 (define-constant ERR_PERMISSION_DENIED u1009)
 (define-constant ERR_NFT_LOCKED u1010)
 (define-constant ERR_INVALID_CYCLES u1011)
+(define-constant ERR_INVALID_BUY_EXPIRE u1012)
+(define-constant ERR_BAD_OFFER u1013)
+(define-constant ERR_NO_BUY_OFFER u1014)
+(define-constant ERR_INVALID_NFT_DESC u1015)
+(define-constant ERR_INVALID_NUM_BLOCKS u1016)
+(define-constant ERR_INVALID_USTX u1017)
 
 (define-constant MAX_CYCLES u12)
+(define-constant MAX_MINE_BLOCKS u50)
 
-;; adjust to your liking
+;; adjust to your liking, but the unit-tests assume the following:
 (define-constant START_BLOCK block-height)
 (define-constant CYCLE_LENGTH u5)
 (define-constant TICKETS_PER_BLOCK u10)
+(define-constant NFT_URL_PREFIX "https://nftrees.com/nfts/")
+(define-constant ADMIN tx-sender)
 
 (define-map miners-at-block
     {
@@ -74,6 +83,12 @@
     }
 )
 
+(define-map nft-buy-offers
+    (buff 64)       ;; serialized nft record
+    { buyer: principal, amount-ustx: uint, expires: uint }
+)
+
+
 (define-private (inner-register-nftree (nft-rec { tickets: uint, data-hash: (buff 32), size: uint }) (owner principal))
     (let (
         (nft-id (var-get next-nft-id))
@@ -85,7 +100,8 @@
     )
 )
 
-;; Register an NFTree from which NFTs can be minted
+;; Register an NFTree from which NFTs can be minted.
+;; Your implenetation may want to constrain who can call this, and when.
 (define-public (register-nftree (nft-rec { tickets: uint, data-hash: (buff 32), size: uint }))
     (inner-register-nftree nft-rec tx-sender)
 )
@@ -132,11 +148,18 @@
     )
 )
 
+;; Mine tickets in this block.  Tx-sender is the miner.
+;; This works like PoX-lite token mining -- miners commit uSTX at this block in
+;; a bid to mine tickets, which can then be redeemed for NFTs.
 (define-public (mine-tickets (amount-ustx uint))
     (begin
         (asserts! (> (stx-get-balance tx-sender) amount-ustx)
-            (err ERR_INSUFFICIENT_BALANCE))
-            
+            (err ERR_INSUFFICIENT_BALANCE)
+        )
+        (asserts! (> amount-ustx u0)
+            (err ERR_INVALID_USTX)
+        )
+        
         (match (add-miner-for-block tx-sender block-height amount-ustx)
             success
                 (begin
@@ -146,6 +169,61 @@
             error
                 (err error)
         )
+    )
+)
+
+(define-private (inner-mine-tickets-multi (idx uint) (state { miner: principal, start-blk: uint, num-blocks: uint, amount-ustx: uint, res: (response bool uint) }))
+    (if (and (is-ok (get res state)) (<= idx (get num-blocks state)))
+        (match (add-miner-for-block (get miner state) (+ idx (get start-blk state)) (get amount-ustx state))
+            success
+                state
+            error
+                (merge state { res: (err error) })
+        )
+        state
+    )
+)
+
+;; Mine tickets across a range of blocks. 
+;; This works like PoX-lite token mining -- miners commit uSTX at this block in
+;; a bid to mine tickets, which can then be redeemed for NFTs.
+;; Unlike mine-tickets, this commits the given amount-ustx in the next N blocks.
+(define-private (inner-add-miner-to-block-multi (amount-ustx uint) (num-blocks uint) (miner principal) (start-blk uint))
+    (begin
+        (asserts! (> (stx-get-balance miner) (* num-blocks amount-ustx))
+            (err ERR_INSUFFICIENT_BALANCE)
+        )
+        
+        (asserts! (and (> num-blocks u0) (<= num-blocks MAX_MINE_BLOCKS))
+            (err ERR_INVALID_NUM_BLOCKS)
+        )
+
+        (asserts! (> amount-ustx u0)
+            (err ERR_INVALID_USTX)
+        )
+ 
+        (unwrap-panic
+            (get res
+                (fold inner-mine-tickets-multi
+                  (list  u1  u2  u3  u4  u5  u6  u7  u8  u9 u10
+                        u11 u12 u13 u14 u15 u16 u17 u18 u19 u20
+                        u21 u22 u23 u24 u25 u26 u27 u28 u29 u30
+                        u31 u32 u33 u34 u35 u36 u37 u38 u39 u40
+                        u41 u42 u43 u44 u45 u46 u47 u48 u49 u50)
+                  { miner: miner, start-blk: start-blk, num-blocks: num-blocks, amount-ustx: amount-ustx, res: (ok true) }
+                )
+            )
+        )
+
+        (ok true)
+    )
+)
+
+(define-public (mine-tickets-multi (amount-ustx-per-block uint) (num-blocks uint))
+    (begin
+        (try! (inner-add-miner-to-block-multi amount-ustx-per-block num-blocks tx-sender block-height))
+        (unwrap-panic (stx-transfer? (* num-blocks amount-ustx-per-block) tx-sender (as-contract tx-sender)))
+        (ok true)
     )
 )
 
@@ -282,30 +360,44 @@
         (ticks (get tickets nft-data))
     )
         (if (> ticks u0)
-            (unwrap-panic (ft-burn? tickets ticks owner))
+            (begin
+                (unwrap-panic (ft-burn? tickets ticks owner))
+                true
+            )
             true
         )
         (unwrap-panic (nft-mint? nftree nft-id owner))
         (map-set nft-recs nft-id nft-data)
         (map-set claimed-nfts nft-data nft-id)
         (var-set next-nft-id (+ u1 nft-id))
-        (ok true)
+        (ok nft-id)
+    )
+)
+
+(define-private (parse-nft-desc (nft-desc (buff 64)))
+    (if (< (len nft-desc) u64)
+        none
+        (let (
+            ;; nft-desc: |--hash (32 bytes)--|--size (16 bytes)--|--tickets (16 bytes)--|
+            (data-hash (read-buff32 nft-desc u0))
+            (size (read-uint nft-desc u32))
+            (num-tickets (read-uint nft-desc u48))
+            (nft-rec { tickets: num-tickets, size: size, data-hash: data-hash })
+        )
+            (some nft-rec)
+        )
     )
 )
 
 (define-private (inner-can-claim-nft? (nft-desc (buff 64)) (owner principal) (parent-nft-id uint) (proof { hashes: (list 32 (buff 32)), index: uint }) (cur-blk uint))
     (let (
-        ;; nft-desc: |--hash (32 bytes)--|--size (16 bytes)--|--tickets (16 bytes)--|
-        (data-hash (read-buff32 nft-desc u0))
-        (size (read-uint nft-desc u16))
-        (num-tickets (read-uint nft-desc u32))
-        (nft-rec { tickets: num-tickets, size: size, data-hash: data-hash })
+        (nft-rec (unwrap! (parse-nft-desc nft-desc) (err ERR_INVALID_NFT_DESC))) 
 
         ;; parent nft must exist
         (parent-nft (unwrap! (map-get? nft-recs parent-nft-id) (err ERR_NO_SUCH_NFT)))
     )
         ;; must own enough tickets
-        (asserts! (>= (ft-get-balance tickets owner) num-tickets)
+        (asserts! (>= (ft-get-balance tickets owner) (get tickets nft-rec))
             (err ERR_INSUFFICIENT_BALANCE))
 
         ;; nft must not have been claimed yet
@@ -338,8 +430,22 @@
 ;; The `hashes` field in the `proof` tuple are the hashes constituting a proof that links the hash of `nft-desc` to the
 ;; `data-hash` field of the NFT whose ID is `parent-nft-id`.  The `index` field in `proof` refers to the ith leaf node
 ;; in the Merkle tree rooted at the parent NFT's `data-hash` that represents the given `nft-desc`.
+;; Returns the new NFT ID on success
 (define-public (claim-nft (nft-desc (buff 64)) (parent-nft-id uint) (proof { hashes: (list 32 (buff 32)), index: uint }))
     (inner-claim-nft nft-desc tx-sender parent-nft-id proof block-height)
+)
+
+;; Instantiate an NFTree that will be owned by the contract.
+;; This creates a "root" NFTree from which NFTs can be claimed.
+(define-public (instantiate-nftree (nft-desc (buff 64)))
+    (let (
+        (nft-rec (unwrap! (parse-nft-desc nft-desc) (err ERR_INVALID_NFT_DESC)))
+    )
+        (asserts! (is-eq tx-sender ADMIN)
+            (err ERR_PERMISSION_DENIED)
+        ) 
+        (inner-instantiate-nft nft-rec (as-contract tx-sender))
+    )
 )
 
 ;; stacking
@@ -528,11 +634,13 @@
     )
         ;; can claim at most 12 cycles
         (asserts! (<= num-cycs MAX_CYCLES)
-            (err ERR_INVALID_CYCLES))
+            (err ERR_INVALID_CYCLES)
+        )
 
         ;; start-cyc + num-cycs must be in the past
         (asserts! (< (+ start-cyc num-cycs) cur-cyc)
-            (err ERR_NOT_CONFIRMED))
+            (err ERR_NOT_CONFIRMED)
+        )
 
         ;; contract should hold enough STX to pay out.
         (asserts! (>= (stx-get-balance (as-contract tx-sender)) ustx-due)
@@ -560,17 +668,304 @@
         (try! (inner-can-claim-stacking-rewards tx-sender start-cyc num-cycs block-height))
     )
 )
-    
+
+;; An NFT buy offer if the buyer has enough STX, and if the given offer expiry is in the
+;; future relative to the given Stacks block height (`blk`).  The NFT may not exist yet;
+;; the buy offer may be for an NFT that has yet to be minted (in which case, a miner can mint
+;; and then sell the NFT with their tickets).  Or, the NFT might exist, in which case, the owner
+;; can simply sell the NFT directly.
+(define-private (inner-can-submit-buy-offer (nft-desc (buff 64)) (buyer principal) (amount-ustx uint) (expires uint) (blk uint))
+    (let (
+        (prev-offer-data
+            (match (map-get? nft-buy-offers nft-desc)
+                ;; case 1: there's an existing offer that expires.  The offer is better if it expired, or if the uSTX offer is higher.
+                existing-offer
+                    (if (or
+                            ;; expired?
+                            (<= (get expires existing-offer) blk)
+                            ;; not expired, but buyer offers more?
+                            (> amount-ustx (get amount-ustx existing-offer))
+                        )
+                        ;; can replace
+                        { is-better: true, prev-offer: (some existing-offer) }
+                        ;; cannot replace
+                        { is-better: false, prev-offer: (some existing-offer) }
+                    )
+                ;; case 2: there's no existing offer, in which case this is automatically the best offer.
+                { is-better: true, prev-offer: none }
+            )
+        )
+    )
+        ;; must be a better offer
+        (asserts! (get is-better prev-offer-data)
+            (err ERR_BAD_OFFER)
+        )
+
+        ;; can't back-date offer
+        (asserts! (< blk expires)
+            (err ERR_INVALID_BUY_EXPIRE)
+        )
+
+        ;; buyer must have STX
+        (asserts! (>= (stx-get-balance buyer) amount-ustx)
+            (err ERR_INSUFFICIENT_BALANCE)
+        )
+
+        (ok prev-offer-data)
+    )
+)
+
+;; Submit an offer to buy a given NFT from a given buyer principal for a given number of uSTX, 
+;; with a Stacks block height expiration.  Does not check for validity.
+;; 
+;; Takes possession of buyer's uSTX. The caller of this function must verify that the buyer is tx-sender.
+;; If the offer supercedes a prior offer, then the prior offer is refunded to the previous buyer.
+;; 
+;; The buyer can get back the escrowed uSTX once the offer expires.
+;;
+;; buyer must be tx-sender, or this function panics.
+(define-private (inner-submit-buy-offer
+                    (nft-desc (buff 64))
+                    (buyer principal)
+                    (amount-ustx uint)
+                    (expires uint)
+                    (prev-offer-opt (optional { buyer: principal, amount-ustx: uint, expires: uint }))
+                    (blk uint)
+                )
+    (begin
+        ;; take possession of the uSTX into escrow.
+        ;; NOTE: this will abort if buyer is not tx-sender.
+        (unwrap-panic (stx-transfer? amount-ustx buyer (as-contract tx-sender)))
+      
+        ;; refund the previous offer if it exists
+        (match prev-offer-opt
+            prev-offer
+                (unwrap-panic (as-contract (stx-transfer? (get amount-ustx prev-offer) tx-sender (get buyer prev-offer))))
+            true
+        )
+
+        ;; store the new buy offer
+        (map-set nft-buy-offers nft-desc { buyer: buyer, amount-ustx: amount-ustx, expires: expires })
+
+        (ok true)
+    )
+)
+
+;; Submit a buy offer for a given NFT record (which may not yet be materialized as an NFT) for a given amount of uSTX.
+;; The offer stands up to the given block height `expires`.
+(define-public (submit-buy-offer (nft-desc (buff 64)) (amount-ustx uint) (expires uint))
+    (let (
+        (prev-offer-data (try! (inner-can-submit-buy-offer nft-desc tx-sender amount-ustx expires block-height)))
+    )
+        (inner-submit-buy-offer
+            nft-desc
+            tx-sender
+            amount-ustx
+            expires
+            (get prev-offer prev-offer-data)
+            block-height
+        )
+    )
+)
+
+;; Check that the given buyer can reclaim the uSTX for a buy offer.
+;; The offer must exist and be expired, and the buyer must match the buyer record
+;; for the given NFT descriptor.
+(define-private (inner-can-reclaim-buy-offer (nft-desc (buff 64)) (buyer principal) (blk uint))
+    (let (
+        ;; buy offer must exist -- i.e. it's unfulfilled 
+        (buy-offer (unwrap! (map-get? nft-buy-offers nft-desc) (err ERR_NO_SUCH_NFT)))
+    )
+        ;; only the buyer can call this
+        (asserts! (is-eq buyer (get buyer buy-offer))
+            (err ERR_PERMISSION_DENIED)
+        )
+
+        ;; buy offer must have expired -- blk must be at or after the expiry height
+        (asserts! (<= (get expires buy-offer) blk)
+            (err ERR_INVALID_BUY_EXPIRE)
+        )
+
+        (ok buy-offer)
+    )
+)
+
+;; Reclaim a buy offer
+(define-private (inner-reclaim-buy-offer (nft-desc (buff 64)) (buy-offer { buyer: principal, amount-ustx: uint, expires: uint }))
+    (begin
+        ;; reclaim uSTX
+        (unwrap-panic (as-contract (stx-transfer? (get amount-ustx buy-offer) tx-sender (get buyer buy-offer))))
+
+        ;; delete buy offer, which must exist
+        (unwrap-panic
+            (if (map-delete nft-buy-offers nft-desc)
+                (ok true)
+                (err ERR_NO_BUY_OFFER)
+            )
+        )
+
+        (ok true)
+    )
+)
+
+;; Reclaim a buy offer that has expired and not been fulfilled.
+;; The buyer would call this for a given NFT they previously submitted a buy offer to.
+;; The only time a buyer needs to do this is if the offer expired.  If they were out-bid,
+;; then their offer is automatically refunded.
+(define-public (reclaim-buy-offer (nft-desc (buff 64)))
+    (inner-reclaim-buy-offer
+        nft-desc
+        (try! (inner-can-reclaim-buy-offer nft-desc tx-sender block-height))
+    )
+)
+
+;; Can an existing NFT be sold by an owner?
+;; * The NFT must exist
+;; * The NFT must be owned by the given seller
+;; * The buy offer for this NFT must exist and must not be expired
+;; Returns the buy offer and NFT ID.
+(define-private (inner-can-fulfill-buy-offer? (nft-desc (buff 64)) (seller principal) (blk uint))
+    (let (
+        (buy-offer-opt (map-get? nft-buy-offers nft-desc))
+        (nft-rec (unwrap! (parse-nft-desc nft-desc) (err ERR_INVALID_NFT_DESC)))
+        (nft-id (unwrap! (map-get? claimed-nfts nft-rec) (err ERR_NO_SUCH_NFT)))
+    )
+        ;; buy-offer must exist and must not be expired
+        (asserts!
+            (match buy-offer-opt
+                buy-offer
+                    (< blk (get expires buy-offer))
+                false
+            )
+            (err ERR_NO_BUY_OFFER)
+        )
+
+        ;; nft must exist, must be owned by this owner, and must not be stacked
+        (asserts!
+            (and
+                (is-eq (some seller) (nft-get-owner? nftree nft-id))
+                (not (nft-stacked? nft-id blk))
+            )
+            (err ERR_PERMISSION_DENIED)
+        )
+
+        (ok { buy-offer: (unwrap-panic buy-offer-opt), nft-id: nft-id })
+    )
+)
+
+;; Fulfill a buy offer.
+;; * send the NFT to the buyer in buy-offer
+;; * send uSTX from escrow to the seller
+;; No validity checking is done.
+(define-private (inner-fulfill-buy-offer (nft-id uint) (nft-desc (buff 64)) (buy-offer { buyer: principal, amount-ustx: uint, expires: uint }) (seller principal))
+    (begin
+        ;; transfer NFT to new owner
+        (unwrap-panic (nft-transfer? nftree nft-id seller (get buyer buy-offer)))
+
+        ;; transfer uSTX to seller
+        (unwrap-panic (as-contract (stx-transfer? (get amount-ustx buy-offer) tx-sender seller)))
+
+        ;; delete buy offer, which must exist
+        (unwrap-panic
+            (if (map-delete nft-buy-offers nft-desc)
+                (ok true)
+                (err ERR_NO_BUY_OFFER)
+            )
+        )
+
+        (ok true)
+    )
+)
+
+;; Fulfill a buy offer for a given NFT (tx-sender is the seller).
+;; The NFT must already exist and be owned by the seller.
+(define-public (fulfill-buy-offer (nft-desc (buff 64)))
+    (let (
+        (order-data (try! (inner-can-fulfill-buy-offer? nft-desc tx-sender block-height)))
+    )
+        (inner-fulfill-buy-offer (get nft-id order-data) nft-desc (get buy-offer order-data) tx-sender)
+    )
+)
+
+;; Determine if a miner can fulfill a buy offer.
+;; Return the parsed NFT record and buy offer the miner fulfills.
+(define-private (inner-can-fulfill-mine-order
+                    (nft-desc (buff 64))
+                    (miner principal)
+                    (parent-nft-id uint)
+                    (proof { hashes: (list 32 (buff 32)), index: uint })
+                    (cur-blk uint)
+                )
+    (let (
+        (buy-offer (unwrap! (map-get? nft-buy-offers nft-desc) (err ERR_NO_BUY_OFFER)))
+        (nft-rec (try! (inner-can-claim-nft? nft-desc miner parent-nft-id proof cur-blk)))
+    )
+        (ok { buy-offer: buy-offer, nft-rec: nft-rec })
+    )
+)
+
+;; Fulfill a buy order by materializing the NFT it describes and giving it to the buyer
+(define-private (inner-fulfill-mine-order
+                    (nft-desc (buff 64))
+                    (nft-rec { tickets: uint, data-hash: (buff 32), size: uint })
+                    (buy-offer { buyer: principal, amount-ustx: uint, expires: uint })
+                    (miner principal)
+                )
+    (let (
+        ;; instantiate the NFT and give it to the miner
+        (nft-id (unwrap-panic (inner-instantiate-nft nft-rec miner)))
+    )
+        ;; send the newly-created NFT to the buyer, and claim the buyer's escrowed STX
+        (unwrap-panic (as-contract (stx-transfer? (get amount-ustx buy-offer) tx-sender miner)))
+        (unwrap-panic (nft-transfer? nftree nft-id miner (get buyer buy-offer)))
+
+        ;; delete buy offer, which must exist
+        (unwrap-panic
+            (if (map-delete nft-buy-offers nft-desc)
+                (ok true)
+                (err ERR_NO_BUY_OFFER)
+            )
+        )
+        (ok nft-id)
+    )
+)
+
+;; Fulfill a buy offer for an NFT that does not exist yet.
+;; Here, tx-sender must be a miner (i.e. someone with enough tickets).
+;; Any miner (i.e. anyone with enough tickets) can do this.
+(define-public (fulfill-mine-order
+                    (nft-desc (buff 64))
+                    (parent-nft-id uint)
+                    (proof { hashes: (list 32 (buff 32)), index: uint })
+               )
+    (let (
+        (order-data (try! (inner-can-fulfill-mine-order nft-desc tx-sender parent-nft-id proof block-height)))
+    )
+        (inner-fulfill-mine-order nft-desc (get nft-rec order-data) (get buy-offer order-data) tx-sender)
+    )
+)
+ 
 ;; SIP 009
 (define-read-only (get-last-token-id)
-    (ok (var-get next-nft-id))
+    (let (
+        (next (var-get next-nft-id))
+    )
+        (if (> next u0)
+            (ok (- next u1))
+            (ok u0)
+        )
+    )
 )
 
 ;; SIP 009
 (define-read-only (get-token-url (nft-id uint))
     (if (nft-stacked? nft-id block-height)
         (ok none)
-        (ok (some "http://example.com"))
+        (match (map-get? nft-recs nft-id)
+            nft-rec
+                (ok (some (concat NFT_URL_PREFIX (buff32-to-string-ascii (get data-hash nft-rec)))))
+            (ok none)
+        )
     )
 )
 
@@ -593,6 +988,42 @@
             (err ERR_PERMISSION_DENIED)
         )
     )
+)
+
+;; so, we can't implement both SIP 009 and SIP 010 in the same contract, but try to anyway,
+;; so miners can sell their tickets.
+(define-public (transfer-tickets (amount uint) (sender principal) (receiver principal) (memo (optional (buff 34))))
+    (begin
+        (asserts! (is-eq sender tx-sender)
+            (err ERR_PERMISSION_DENIED)
+        )
+        (ft-transfer? tickets amount sender receiver)
+    )
+)
+
+;; SIP 010
+(define-public (get-name)
+    (ok "nftree-tickets")
+)
+
+;; SIP 010
+(define-public (get-symbol)
+    (ok "nftx")
+)
+
+;; SIP 010
+(define-public (get-decimals)
+    (ok u0)
+)
+
+;; SIP 010
+(define-public (get-total-supply)
+    (ok (ft-get-supply tickets))
+)
+
+;; SIP 010
+(define-public (get-token-uri)
+    (ok none)
 )
 
 ;; VRF
@@ -622,6 +1053,26 @@
     0xe0 0xe1 0xe2 0xe3 0xe4 0xe5 0xe6 0xe7 0xe8 0xe9 0xea 0xeb 0xec 0xed 0xee 0xef
     0xf0 0xf1 0xf2 0xf3 0xf4 0xf5 0xf6 0xf7 0xf8 0xf9 0xfa 0xfb 0xfc 0xfd 0xfe 0xff
 ))
+
+(define-constant BYTE_TO_STRING (list
+    "00" "01" "02" "03" "04" "05" "06" "07" "08" "09" "0a" "0b" "0c" "0d" "0e" "0f"
+    "10" "11" "12" "13" "14" "15" "16" "17" "18" "19" "1a" "1b" "1c" "1d" "1e" "1f"
+    "20" "21" "22" "23" "24" "25" "26" "27" "28" "29" "2a" "2b" "2c" "2d" "2e" "2f"
+    "30" "31" "32" "33" "34" "35" "36" "37" "38" "39" "3a" "3b" "3c" "3d" "3e" "3f"
+    "40" "41" "42" "43" "44" "45" "46" "47" "48" "49" "4a" "4b" "4c" "4d" "4e" "4f"
+    "50" "51" "52" "53" "54" "55" "56" "57" "58" "59" "5a" "5b" "5c" "5d" "5e" "5f"
+    "60" "61" "62" "63" "64" "65" "66" "67" "68" "69" "6a" "6b" "6c" "6d" "6e" "6f"
+    "70" "71" "72" "73" "74" "75" "76" "77" "78" "79" "7a" "7b" "7c" "7d" "7e" "7f"
+    "80" "81" "82" "83" "84" "85" "86" "87" "88" "89" "8a" "8b" "8c" "8d" "8e" "8f"
+    "90" "91" "92" "93" "94" "95" "96" "97" "98" "99" "9a" "9b" "9c" "9d" "9e" "9f"
+    "a0" "a1" "a2" "a3" "a4" "a5" "a6" "a7" "a8" "a9" "aa" "ab" "ac" "ad" "ae" "af"
+    "b0" "b1" "b2" "b3" "b4" "b5" "b6" "b7" "b8" "b9" "ba" "bb" "bc" "bd" "be" "bf"
+    "c0" "c1" "c2" "c3" "c4" "c5" "c6" "c7" "c8" "c9" "ca" "cb" "cc" "cd" "ce" "cf"
+    "d0" "d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8" "d9" "da" "db" "dc" "dd" "de" "df"
+    "e0" "e1" "e2" "e3" "e4" "e5" "e6" "e7" "e8" "e9" "ea" "eb" "ec" "ed" "ee" "ef"
+    "f0" "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8" "f9" "fa" "fb" "fc" "fd" "fe" "ff"
+))
+    
 
 ;; Convert a 1-byte buffer into its uint representation.
 (define-private (buff-to-u8 (byte (buff 1)))
@@ -668,3 +1119,25 @@
         data: data
     })
 )
+
+(define-private (byte-to-string (byte (buff 1)))
+    (unwrap-panic (element-at BYTE_TO_STRING (unwrap-panic (index-of BUFF_TO_BYTE byte))))
+)
+
+(define-private (buff32-to-string-ascii-closure (idx uint) (state { acc: (string-ascii 64), data: (buff 32) }))
+    {
+        acc: (unwrap-panic (as-max-len? (concat (get acc state) (byte-to-string (unwrap-panic (element-at (get data state) idx)))) u64)),
+        data: (get data state)
+    }
+)
+
+(define-private (buff32-to-string-ascii (data (buff 32)))
+   (unwrap-panic
+        (if (is-eq (len data) u32)
+            (ok (get acc (fold buff32-to-string-ascii-closure (list u0 u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13 u14 u15 u16 u17 u18 u19 u20 u21 u22 u23 u24 u25 u26 u27 u28 u29 u30 u31) { acc: "", data: data })))
+            (err false)
+        )
+    )
+)
+
+
