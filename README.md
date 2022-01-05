@@ -264,6 +264,23 @@ $ cd ./src
 $ ./nftree.js build /path/to/your/NFTs /path/to/NFTree/output
 ```
 
+* The `/path/to/your/NFTs` argument is a directory with all of your NFTs as
+  files.  In addition, there must be a `tickets.csv` file that has two columns:
+`name` and `tickets`.  The `name` column is the file name, and `tickets` is the
+number of tickets the NFT is worth.
+
+* The `/path/to/NFTree/output` argument is a directory into which the NFTs will
+  be copied, and into which NFT descriptors and NFT Merkle proofs will be
+written.  Each NFT will be named after its SHA512/256 hash; each NFT descriptor
+will be named after its hash and a `.desc` suffix; each Merkle proof will be
+named after its hash and a `.proof` suffix.
+
+The `/path/to/your/NFTs` argument can contain nested subdirectories.  Each
+subdirectory represents NFTrees within the NFTree, and must have its own
+`tickets.csv` file for its files.  An NFT descriptor will be created for each
+subdirectory NFTree, such that once the NFTree is minted, the inner NFTs can
+then be minted.
+
 This program prints out the hex-encoded NFT descriptor for the NFTree as a JSON
 string.
 
@@ -274,14 +291,79 @@ $ ./nftree.js build /tmp/nftree-input/ /tmp/nftree-test
 "8a480f3f87b03dc1d6b8270cd65fc0e77f7640d49f97d4cd3b789c9de2d280080000000000000000000000000000001f00000000000000000000000000000684"
 ```
 
-Once the NFT creator has this NFT descriptor, they can call `(instantiate-nftree)` with it:
+In more detail:
+
+```
+$ find /tmp/nftree-input/
+/tmp/nftree-input/
+/tmp/nftree-input/foo
+/tmp/nftree-input/foo/foo
+/tmp/nftree-input/foo/tickets.csv
+/tmp/nftree-input/foo/bar
+/tmp/nftree-input/tickets.csv
+/tmp/nftree-input/hello
+/tmp/nftree-input/snarf
+/tmp/nftree-input/boop
+$
+$ cat /tmp/nftree-input/tickets.csv
+name,tickets
+hello,123
+boop,456
+snarf,789
+$
+$ cat /tmp/nftree-input/foo/tickets.csv
+name,tickets
+foo,100
+bar,200
+$
+$ ./nftree.js build /tmp/nftree-input/ /tmp/nftree-test
+"8a480f3f87b03dc1d6b8270cd65fc0e77f7640d49f97d4cd3b789c9de2d280080000000000000000000000000000001f00000000000000000000000000000684"
+$
+$ find /tmp/nftree-test
+/tmp/nftree-test/
+/tmp/nftree-test/6ff3e7040fc45301764d3b5be9a01814a64f756545d869f4a44d9689e854bf1f.proof
+/tmp/nftree-test/23000de7d22826a683fac628c926427ddd986913dba5332d6227085e746b577f.proof
+/tmp/nftree-test/04c2f43e067d637611958ae92a54e90848dedeb5908bb3d3363cc57c573332b4
+/tmp/nftree-test/23000de7d22826a683fac628c926427ddd986913dba5332d6227085e746b577f.desc
+/tmp/nftree-test/d3dbb6686010b4b74742c52dfa8564f2e1501219568452a01b5a69d295d7d8c2.proof
+/tmp/nftree-test/8a480f3f87b03dc1d6b8270cd65fc0e77f7640d49f97d4cd3b789c9de2d28008.desc
+/tmp/nftree-test/332bc3d727592cdc62f40526cc2476d2627441656352b33da1eb53556c69cd17
+/tmp/nftree-test/d3dbb6686010b4b74742c52dfa8564f2e1501219568452a01b5a69d295d7d8c2
+/tmp/nftree-test/d3dbb6686010b4b74742c52dfa8564f2e1501219568452a01b5a69d295d7d8c2.desc
+/tmp/nftree-test/6ff3e7040fc45301764d3b5be9a01814a64f756545d869f4a44d9689e854bf1f
+/tmp/nftree-test/root
+/tmp/nftree-test/bf73ee1fb7e8bf8fcdd5da06dd547052cd0f929a88f4aead68b218d3bde91134.proof
+/tmp/nftree-test/6ff3e7040fc45301764d3b5be9a01814a64f756545d869f4a44d9689e854bf1f.desc
+/tmp/nftree-test/332bc3d727592cdc62f40526cc2476d2627441656352b33da1eb53556c69cd17.proof
+/tmp/nftree-test/bf73ee1fb7e8bf8fcdd5da06dd547052cd0f929a88f4aead68b218d3bde91134.desc
+/tmp/nftree-test/04c2f43e067d637611958ae92a54e90848dedeb5908bb3d3363cc57c573332b4.proof
+/tmp/nftree-test/bf73ee1fb7e8bf8fcdd5da06dd547052cd0f929a88f4aead68b218d3bde91134
+/tmp/nftree-test/04c2f43e067d637611958ae92a54e90848dedeb5908bb3d3363cc57c573332b4.desc
+/tmp/nftree-test/332bc3d727592cdc62f40526cc2476d2627441656352b33da1eb53556c69cd17.desc
+```
+
+The NFTree creator needs to upload the contents of `/path/to/NFTree/output` to a
+Web server, so they'll be available for viewing.  The URL to each NFT will be
+constructed by the NFTree smart contract by appending the SHA512/256 hash of the
+NFT to a knwon URL prefix.  So for example, if the NFTs are going to be
+available at `https://nftree-example.com/nft-data`, the NFT creator would put
+the contents of this directory onto the Web server such that
+`https://nftree-example.com/nft-data/6ff3e7040fc45301764d3b5be9a01814a64f756545d869f4a44d9689e854bf1f`
+resolved to the file `6ff3e7040fc45301764d3b5be9a01814a64f756545d869f4a44d9689e854bf1f`.
+The NFTree project creator can change the URL prefix by setting the
+`NFT_URL_PREFIX` constant in the `nftree.clar` smart contract.
+
+Once the NFT creator has the outputted NFT descriptor, they can call `(instantiate-nftree)` with it:
 
 ```
 (define-public (instantiate-nftree (nft-desc (buff 64)))
 ```
 
-This function is used to mint a whole collection.  The NFT project leader(s)
-would call this to instantiate new collections are they are made.
+This function is used to mint the whole collection in `/path/to/your/NFTs`.  The NFT project leader(s)
+would call this to instantiate new collections are they are made.  All NFTs
+represented in `/path/to/your/NFTs` can then be instantiated by this smart
+contract by interested users; they'd use the corresponding `.proof` and `.desc`
+files to construct the relevant contract-calls.
 
 This function returns an integer NFT ID, which must be passed into functions
 related to instantiating NFTs off of the NFTree (this argument is called
@@ -336,12 +418,13 @@ the `(claim-nft)` function:
 ```
 
 * The `nft-desc` is the NFT descriptor for the NFT the caller wants to claim.
+  It is stored in a `.desc` file created by `./nftree.js build`.
 
 * The `parent-nft-id` is the integer NFT ID of the NFTree in which this NFT can be
 found.  For example, this would be the value returned by `(instantiate-nftree)`.
 
 * The `proof` argument is the Merkle proof for this NFT descriptor.  Its JSON
-representation is produced with `./nftree.js build`.
+representation is produced with `./nftree.js build`, in a `.proof` file.
 
 The caller must have the requisite number of tickets.  The tickets will be burnt
 and the NFT will be instantiated to the caller.  If successful, this function
@@ -410,14 +493,14 @@ the `(fulfill-mine-order)` function:
 ```
 
 * The `nft-desc` argument is the NFT descriptor for the NFT to be instantiated
-  and sold.
+  and sold.  It is stored in a `.desc` file created by `./nftree.js build`.
 
 * The `parent-nft-id` argument is the NFT identifier of the NFTree that contains
   this NFT.
 
 * The `proof` argument is a Merkle proof that links the `nft-desc` to the NFTree
   identified by `parent-nft-id`.  Its JSON representation is created via a
-`./nftree.js build` invocation.
+`./nftree.js build` invocation, and is stored in a `.proof` file.
 
 If this function succeeds, the caller's tickets are burnt, the NFT is
 instantiated and then transferred to the buyer, and the caller gets the offered STX.
