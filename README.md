@@ -70,13 +70,19 @@ in a particular collection in a particular series over time.
 ### Problems with the State-of-the-Art
 
 The state-of-the-art way to sell a collection of NFTs is for the NFT creator -- be it a
-person or smart contract -- to instantiate the bindings for *each* NFT up front.
+person or smart contract -- to instantiate the bindings for each NFT in one of
+two ways: all up-front, or upon request from a buyer.
 Once instantiated, they can be transferred to other users at the creator's whim,
-such as by selling them.  While straightforward, it introduces several problems:
+such as by selling them.  While straightforward, this introduces several problems:
 
-* It clogs the blockchain.  The NFT creator ends up instantiating an NFT before
-  there is a buyer, which needlessly consumes blockchain compute capacity.
-Moreover, the NFT creator ends up paying for the minting up-front.
+* It can clog the blockchain.  If the NFT creator instantiates an NFT before
+  there is a buyer, it needlessly consumes blockchain compute capacity.
+
+* It costs the creator tokens.  In both approaches, the NFT
+creator ends up paying for the transaction fee in the underlying blockchain's
+tokens.  While the creator can price the transaction fee into the sale cost, the
+current sale mechanism creates a recurring token cost that the seller must be
+willing to pay.
 
 * It creates a moral hazard for the NFT creator.  The collection creator initially
   owns all NFTs, and effectively controls the market for them.  The NFT creator
@@ -86,12 +92,13 @@ exit-scam their users:  they could promise to use the raised funds to build out 
 application for the NFTs, and then just take the money and leave.
 
 * It underutilizes and under-rewards the user community.  Selling NFTs
-to would-be users this way only encourages them to hype the NFT project in a bid to
-find a "greater fool" to which to sell the NFT.  This is unsustainable, because
-nothing appreciates forever.  Moreover, this does not align users' incentives
-with helping make the NFT-based project successful at providing the service it
-originally advertised -- the user has no reason to hold onto the NFT unless the
-access to the goods or services it represents are already finished.
+to would-be users this way only encourages them flip NFTs, instead of trying
+to make the project itself better.  This is unsustainable, because
+nothing appreciates forever.  If the NFT is sold as a way to raise funds to
+build out some good or service that the NFT will eventually be used to access,
+then this introduces a window of time where users would rather buy and flip NFTs
+instead of commit to the project long-term (distorting the market and creating a
+moral hazard for the NFT creators).
 
 These problems are addressed by NFTrees.
 
@@ -109,7 +116,7 @@ buyer would pay to instantiate an NFT off of the NFTree.  This way, NFTs are
 only instantiated once there is demand for them, which prevents the blockchain
 from getting clogged.
 
-Two of the three problems with the state-of-the-art way of minting NFTs have to
+Two of the problems with the state-of-the-art way of minting NFTs have to
 do with creating the right incentives for a successful NFT project.  NFTrees
 address these two problems by introducing a _mining_ protocol, modeled after how
 an arcade makes money.
@@ -197,22 +204,28 @@ tickets for them.
 
 ## User Roles
 
-There are three user rules in an NFTree project:
+There are five user rules in an NFTree project:
 
-* Creators, who mint whole collections of NFTs as NFTrees.
+* Creators, who mint whole collections of NFTs as NFTrees.  They receive a
+  commission each time an NFT is minted off of an NFTree that they created.
 
 * Ticket miners, who send STX to the NFTree contract to mine NFTree tickets
   which will be burnt to instantiate NFTs.  Ticket miners can claim the NFTs for
 themselves, they can sell their tickets to other users, and they can atomically
 instantiate and then sell an NFT for STX.
 
-* Users, who buy, sell, and stack their NFTs.  To acquire an NFT, the NFTree
-  contract provides a way for a user to submit time-limited buy offer for a
-particular NFT.  Another user who owns the NFT can fulfill the offer by trading
-the NFT for the offerred STX.  If the NFT is not yet instantiated, a ticket
-miner can fulfill the offer by instantiating and transfering the NFT to the buyer and claiming
-the offerred STX.  When stacking an NFT, a user can accrue a fraction of the STX
-sent to the NFTree contract by ticket miners.
+* NFT buyers, who spend STX to acquire NFTs by submitting buy orders to the
+  contract.  The contract holds their STX in escrow for the duration of the buy
+order's lifetime, which in turn provides a global insight into how much demand
+(in STX) there is for NFTs in the contract's NFTrees.
+
+* NFT sellers, who fulfill buy orders by either selling NFTs they own, or
+  burning tickets to mint uninstantiated NFTs for buyers.  In the latter case, a
+commission fee will be claimed by the NFTree creator for the sold NFT.
+
+* NFT stackers, who lock up their NFTs to accumulate a STX yield from ticket
+  mining.  The act of locking the NFT renders it unsellable, and unresolvable
+via other smart contracts.
 
 Each type of user has a different set of APIs to use to carry out their roles.
 
@@ -221,12 +234,6 @@ Each type of user has a different set of APIs to use to carry out their roles.
 There are two parts to this project: the NFTree smart contract, and the
 `nftree.js` command-line tool for making NFTrees.  The smart contract is a
 proof-of-concept, and should be tailored to your project needs.
-
-The top-level function to create an NFTree is `(instantiate-nftree)`:
-
-```
-(define-public (instantiate-nftree (nft-desc (buff 64)))
-```
 
 ## NFT Descriptors
 
@@ -353,23 +360,30 @@ resolved to the file `6ff3e7040fc45301764d3b5be9a01814a64f756545d869f4a44d9689e8
 The NFTree project creator can change the URL prefix by setting the
 `NFT_URL_PREFIX` constant in the `nftree.clar` smart contract.
 
+Once the NFT creator has the outputted NFT descriptor, then can call one of the
+top-level functions to instantiate it on-chain -- `(register-nftree)` and
+`(register-contract-nftree)`:
+
+```
+(define-public (register-nftree (nft-rec { tickets: uint, data-hash: (buff 32), size: uint }))
+(define-public (register-contract-nftree (nft-rec { tickets: uint, data-hash: (buff 32), size: uint }))
+```
+
+The only difference between them is that the contract will own the root NFTree
+in the latter case, so no commission will be paid out for the root.
 Once the NFT creator has the outputted NFT descriptor, they can call `(instantiate-nftree)` with it:
 
-```
-(define-public (instantiate-nftree (nft-desc (buff 64)))
-```
-
-This function is used to mint the whole collection in `/path/to/your/NFTs`.  The NFT project leader(s)
+Both of these functions are used to mint the whole collection in `/path/to/your/NFTs`.  The NFT project leader(s)
 would call this to instantiate new collections are they are made.  All NFTs
 represented in `/path/to/your/NFTs` can then be instantiated by this smart
 contract by interested users; they'd use the corresponding `.proof` and `.desc`
 files to construct the relevant contract-calls.
 
-This function returns an integer NFT ID, which must be passed into functions
+These functions return an integer NFT ID, which must be passed into functions
 related to instantiating NFTs off of the NFTree (this argument is called
 `parent-nft-id`).
 
-**WARNING**: If you make an NFT project, you will want to update this function
+**WARNING**: If you make an NFT project, you will want to update these functions
 to limit who can produce NFTrees in your project this way.  Usually, this will
 only be a designated admin, but any authentication rules you can write in
 Clarity are permitted.  For example, you could have a DAO contract decide who
@@ -407,28 +421,6 @@ Miners can check if they were the winner in a block with `(check-winner)`:
 ```
 (define-read-only (check-winner (miner principal) (blk uint))
 ```
-
-## Instantiating an NFT 
-
-If a miner has have enough tickets, they can instantiate an NFT at any time with a call to 
-the `(claim-nft)` function:
-
-```
-(define-public (claim-nft (nft-desc (buff 64)) (parent-nft-id uint) (proof { hashes: (list 32 (buff 32)), index: uint }))
-```
-
-* The `nft-desc` is the NFT descriptor for the NFT the caller wants to claim.
-  It is stored in a `.desc` file created by `./nftree.js build`.
-
-* The `parent-nft-id` is the integer NFT ID of the NFTree in which this NFT can be
-found.  For example, this would be the value returned by `(instantiate-nftree)`.
-
-* The `proof` argument is the Merkle proof for this NFT descriptor.  Its JSON
-representation is produced with `./nftree.js build`, in a `.proof` file.
-
-The caller must have the requisite number of tickets.  The tickets will be burnt
-and the NFT will be instantiated to the caller.  If successful, this function
-returns the NFT ID for the newly-instantiated NFT.
 
 ## Buying an NFT
 
@@ -565,6 +557,11 @@ as, but not limited to, the following:
 * Blocking the release of subsequent NFTs until enough tickets have been mined.
 
 * Implementing a semi-fungible token.
+
+In all cases, the _owner_ of the NFTree receives the commission fees for minting
+NFTs off of it.  What this means is that if Alice registers an NFTree that
+contains another NFTree, and Bob buys the inner NFTree, then the commission 
+fees instantiated off of Bob's NFTree will go to Bob, not Alice.
 
 ## Standards Conformance
 
