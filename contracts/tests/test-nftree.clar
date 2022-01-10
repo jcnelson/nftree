@@ -1499,6 +1499,7 @@
 (define-private (test-inner-fulfill-mine-order)
     (let ( 
         (miner-1 'SP1GNGP7GE7D8EK20R0CZ6H82STXAVPW8916C0EVC)
+        (seller-1 'SP2FXK1EKMR9KDFJCMYD1M3P2ZSFJC0B2QGYD9746)
         (merkle-tree (make-merkle-tree-8 0x0000000000000003))
         (nft-descs (get nft-descs merkle-tree))
         (nft-desc-1 (unwrap-panic (element-at nft-descs u0)))
@@ -1523,8 +1524,15 @@
         (saved-tx-sender tx-sender)
         (miner-1-stx-before (stx-get-balance miner-1))
 
-        ;; create parent to tx-sender
-        (parent-nft-id (unwrap-panic (inner-register-nftree { tickets: u21, data-hash: root, size: u21 } tx-sender)))
+        ;; create parent to tx-sender, and give it to the seller
+        (parent-nft-id (let (
+            (parent-nft-id (unwrap-panic (inner-register-nftree { tickets: u21, data-hash: root, size: u21 } tx-sender)))
+        )
+            (unwrap-panic (nft-transfer? nftree parent-nft-id tx-sender seller-1))
+            parent-nft-id
+        ))
+        (parent-owner (unwrap-panic (nft-get-owner? nftree parent-nft-id)))
+        (parent-balance-before (stx-get-balance parent-owner))
     )
         (print "run test-inner-fulfill-mine-order")
 
@@ -1532,9 +1540,8 @@
         (unwrap-panic (inner-submit-buy-offer nft-desc-1 tx-sender u10 u101 none u100))
 
         (let (
-            (nft-id (unwrap-panic (inner-fulfill-mine-order nft-desc-1 nft-rec-1 (unwrap-panic (map-get? nft-buy-offers nft-desc-1)) miner-1)))
+            (nft-id (unwrap-panic (inner-fulfill-mine-order nft-desc-1 nft-rec-1 parent-nft-id (unwrap-panic (map-get? nft-buy-offers nft-desc-1)) miner-1)))
         )
-
             ;; NFT exists now, and it belongs to tx-sender
             (asserts! (is-eq (nft-get-owner? nftree nft-id) (some tx-sender))
                 (err u0)
@@ -1546,14 +1553,30 @@
             (err u1)
         )
 
-        ;; contract holds the same amount of ustx
-        (asserts! (is-eq (stx-get-balance (as-contract tx-sender)) contract-stx-before)
+        ;; contract holds the same amount of ustx, or more (due to rounding)
+        (asserts! (>= (stx-get-balance (as-contract tx-sender)) contract-stx-before)
             (err u2)
         )
 
         ;; no more buy offer
         (asserts! (is-none (map-get? nft-buy-offers nft-desc-1))
             (err u3)
+        )
+
+        ;; miner gets the `(100 - CREATOR_COMMISSION) / 100`-percent of the STX
+        (asserts! (is-eq
+                    (+ miner-1-stx-before (/ (* u10 (- u100 CREATOR_COMMISSION)) u100))
+                    (stx-get-balance miner-1)
+                  )
+            (err u4)
+        )
+
+        ;; NFT parent creator gets the `(CREATOR_COMMISSION / 100)`-percent of the STX
+        (asserts! (is-eq
+                    (+ parent-balance-before (/ (* u10 CREATOR_COMMISSION) u100))
+                    (stx-get-balance parent-owner)
+                  )
+            (err u5)
         )
 
         (ok true)
