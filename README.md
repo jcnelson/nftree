@@ -7,12 +7,12 @@ earn their owners a yield in STX.
 
 * Mint an *arbitrarily large* collection of NFTs with a *single* transaction.
 * The buyer, not the creator, pays the transaction fee for minting the NFT.
-* Minted but NFTs generate *passive income* for their owner in STX if the owner
+* NFTs generate *passive income* for their owner in STX if the owner
   locks them up to prevent them from being sold or accessed on-chain.
-* No pre-sale moral hazards.  NFTs are instantiated on-chain via the smart
-  contract on buyer demand.  The NFT creator instantiates the set of NFTs, but the
-buyer pays to instantiate an individual NFTs from the set when they take
-possession.
+* Fire-and-forget minting.  NFTs are instantiated on-chain via the smart
+  contract on buyer demand.  The NFT creator does not need to mint and sell
+NFTs once the collection is published as an NFTree.
+* The NFT creator gets a commission fee each time an NFT is instantiated.
 * Minting process rewards early NFT community members of successful NFT projects
   built as NFTrees.
 
@@ -574,7 +574,8 @@ with the same semantics.
 The URL of an NFT is calculated by appending the hash of the NFT from its NFT
 descriptor to a URL prefix.
 
-# Running tests
+# Development
+## Running tests
 
 You will need `clarity-cli` in your `$PATH`.  You can get it from
 https://github.com/blockstack/stacks-blockchain.
@@ -583,7 +584,7 @@ https://github.com/blockstack/stacks-blockchain.
 $ cd ./contracts/tests && ./run-tests.sh
 ```
 
-# Contributing
+## Contributing
 
 This repository is meant to be a proof-of-concept.  In keeping with the Stacks
 Foundation ethos, this project is meant to set up other Stacks ecosystem
@@ -592,3 +593,178 @@ long as I work for the Stacks Foundation.
 
 As such, I encourage you to fork this repo and make your own changes instead of
 trying to send PRs.
+
+# Business Models
+
+Here are a few ways you can use this contract.  A few modifications may be
+necessary, depending on the application, but they are straight-forward.
+
+## Content Mining
+
+Imagine an application that shows high-quality content on some topic.  NFTree
+creators act as journalists -- they gather and produce a firehose of content, and every so
+often, they register an NFTree with their new content.
+
+   * **Small tweak**:  The contract will need to charge NFTree creators a
+     registration fee, in NFTree tickets, for registering a new NFTree.  The fee
+should be dynamic -- it should increase if there are more NFTrees being created,
+and decrease if there are less.
+
+NFTree creators are compensated via commission fees whenever someone buys an
+NFT off of their NFTrees.  Not all content they produce will be purchased, so
+they are incentivized to only produce content that will likely be bought (i.e.
+content that is on-topic).
+
+A piece of content only shows up in the app if its NFT is actually purchased.
+The NFT buyers act as content moderators.  The set of NFTs is visible to everyone,
+but it's a firehose of data -- buyers act as curators for the data, and in 
+doing so provide a good experience for the app's users.  Buyers are
+compensated by stacking their NFTs.
+
+   * **Small tweak**:  The contract will need to be altered so that an NFT can
+     only be stacked once, and within a fixed window of time after purchase.  This is to ensure that there won't be free-riders
+who stack or accumulate lots of NFTs but don't provide any useful service in exchange for the
+income they'd receive.
+
+Miners make money by mining tickets which are then sold to NFTree creators to
+pay their registration fees.  In addition, they make money when they fulfill a
+mine order -- they receive the non-commission portion of the buyer's STX.
+
+### Why It Works
+
+Everyone makes more money if more users are drawn into using the app.  Users are
+drawn to the app by more and better content, which creates demand for both content
+creators and content curators (buyers), which in turn creates demand for miners.
+
+A subset of users are incentivized to curate high-quality content, since if they draw more 
+users in, they can recoup their purchase price by stacking the NFT later.  Because they
+can only stack it once, and because the NFT can expire,
+they are incentivized to increase the amount of STX flowing into the contract
+before they stack and do it quickly.  This incentivizes curators to grow
+demand for miner tickets, which is driven both by curation and by content
+creation.
+
+Some users are also incentivized to become content creators, because high-quality
+content earns them a commission fee.  The registration fee they pay in NFTree
+tickets drives demand for tickets, and thus income to NFT stackers.  As long as
+the registration fee is lower than the expected NFT purchase price, creating
+high-quality content will be profitable.  By making it so that the registration
+fee grows or shrinks with NFTree creation rates, there will always be a time
+when the registration fee will be low enough for a user to participate as long
+as the expected NFT purchase exceeds the blockchain transaction fee.
+
+The system reaches a steady state when the profit margin for selling tickets
+equals the total cost for mining them (transaction fee plus STX committed), when
+the profit margin for stacking an NFT equals the cost of buying it (including
+transaction fees), and when the profit margin for creating and selling NFTs via
+an NFTree equals the ticket fee and transaction fee for registering them.
+
+* If creating NFTrees and selling NFTs becomes unprofitable, the registration fee will decrease
+  until it becomes break-even or profitable again.
+
+* If buying and stacking NFTs becomes unprofitable, fewer buyers will stack
+  them, causing stacking yields to increase, and thereby encouraging more
+stacking.
+
+* If mining tickets becomes unprofitable, fewer miners will participate, meaning
+  that it will take fewer STX to win the same amount of tickets.  As long as the
+expected ticket reward meets or exceeds the underlying blockchain transaction
+fee, there will always be at least one miner producing tickets for NFTree
+creators and buyers to purchase. 
+
+## Paid Subscriptions That Become Free once Popular
+
+Imagine an application that acts like Medium or Substack, in which only free
+articles are available to the public, but subscribers can see additional content
+for a fee.  NFTrees can implement a variant of this whereby a piece of content
+becomes public if enough people sponsor it.
+
+To do so, an author breaks their document into a set of N [Shamir
+Secrets](https://en.wikipedia.org/wiki/Shamir%27s_Secret_Sharing), each of which
+is represented as an NFT.  They publish an NFTree out of these shares, but they
+do not make the shares public.  Once someone buys an NFT from the NFTree, the
+author discloses the share to the buyer.  The buyer can then disclose the share
+if they wish.  Once M <= N shares have been bought and dislosed, anyone can
+recombine the M shares and recover the original content.
+   
+   * **Small tweak**:  The contract will need to be altered so that an NFT's
+     stacking power begins to diminish with age (but never goes to zero).  This
+causes older NFTs to become less valuable, but it also means that early
+subscribers still stand to gain more STX than late subscribers.  By causing
+older NFTs to depreciate, it "makes room" for new subscribers to join in the
+system (and it also encourages OG subscribers to keep subscribing to remain
+competative).
+
+## Why It Works
+
+Buyers are like subscribers here, but they also share in the upside of the
+author if the author becomes popular enough to have many subscribers.
+Specifically, _early_ subscribers gain _more_ upside than late subscribers,
+since early subscribers can stack their NFTs and earn STX yield from them.  This
+aligns subscribers' interests with the author -- subscribers are incentivized to
+_help_ the author find more subscribers.
+
+Miners gain from this because they must mine and sell the tickets to the buyers
+in order to mint the NFTs.
+
+The author of course gains from having more buyers because the earn a commission
+on each Shamir Secret NFT they can sell.
+
+## Anyone-Can-Pay Web Hosting
+
+Imagine a Web host that would keep hosting a website's content as long as
+_somebody_ paid the bills.  It doesn't have to be the website creator; in fact,
+the website creator can just walk away from the website and let its users take
+it over this way.
+
+This can be enabled with NFTrees as follows.  Every billing cycle, the Web host
+creates an NFTree out of the hosted content and sets a price for hosting it for
+the next billing cycle.  All NFTs that are bought off of the NFTree remain
+online for the next cycle; all that are not bought are removed from storage.
+The `tickets` field would reflect a meaningful measurement of the relative cost
+to keep the data online.
+
+The website itself would encourage visitors to buy NFTs periodically, such as by
+giving flares to sponsoring users or giving them access to extra features or
+content.  In the limit, the website could structure itself like shareware -- 
+only people who help pay to keep it going get access to the full features;
+everyone else gets only limited features.
+
+By making it so that frequent sponsors can stack their NFTs, early
+sponsors can profit by helping make the website more and more popular as there
+is increased demand for NFTs (and tickets).  This in turn crowdsources the task
+of helping increase the website's popularity -- as the website gets more
+popular, there would likely become more content to host, which in turn drives
+more demand for mining tickets, which in turn increases the yield on stacked
+NFTs.
+
+Miners continue to mine and burn tickets to sell NFTs as before, but with the
+following tweak:
+
+   * **Small tweak**: To ensure that the hosting bill is paid in full, the
+     contract must treat the `tickets` field as the number of STX to pay, not
+tickets.  To ensure this, ticket mining must be tweaked so that the number of
+tickets minted is _equal to_ the number of STX put into the contract, instead of
+fixed.
+
+This tweak gives users the ability to leverage the appreciation of STX to lower
+their hosting bill.  If they commit STX at a lower price than it is when the
+hosting bill is paid, then they will have saved money, since the appreciation of
+STX in the mean time pays for part of the hosting cost.
+
+### Why It Works
+
+The system works much like how crowdsourcing anything else works -- if enough
+people pay for a good or service, the service continues.  The key difference is
+that there does not need to be a point person for gathering the money to pay the
+operating bills.
+
+Once the size of the userbase reaches its peak will the act of buying and stacking NFTs become
+break-even -- the stacking revenue will match the cost of hosting the data, plus any
+markup the host applies, plus transaction fees on the underlying blockchain.
+But as the userbase is growing, stacking is profitable, since there is
+increasing demand for NFTs.
+
+If the userbase shrinks, then the web host would delete unpaid-for site data.
+This in turn prunes the website of content that users no longer want, until
+maintaining the website becomes break-even with the new userbase size.
