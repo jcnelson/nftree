@@ -34,7 +34,7 @@
 (define-constant CYCLE_LENGTH u5)
 (define-constant TICKETS_PER_BLOCK u10)
 (define-constant NFT_URL_PREFIX "https://nftrees.com/nfts/")
-(define-constant ADMIN tx-sender)
+(define-constant CREATOR_COMMISSION u30)
 
 (define-map miners-at-block
     {
@@ -101,9 +101,20 @@
 )
 
 ;; Register an NFTree from which NFTs can be minted.
-;; Your implenetation may want to constrain who can call this, and when.
+;; This creates a "root" NFTree from which NFTs can be claimed.
+;; The NFTree will be owned by tx-sender.
+;; Your implemetation may want to constrain who can call this, and when.
 (define-public (register-nftree (nft-rec { tickets: uint, data-hash: (buff 32), size: uint }))
+    ;; TODO: you will need to fill in authentication logic here
     (inner-register-nftree nft-rec tx-sender)
+)
+
+;; Register an NFTree that will be owned by the contract (so, no commission).
+;; This creates a "root" NFTree from which NFTs can be claimed.
+;; Your implementation may want to constrain who can call this, and when.
+(define-public (register-contract-nftree (nft-rec { tickets: uint, data-hash: (buff 32), size: uint }))
+    ;; TODO: you will need to fill in authentication logic here
+    (inner-register-nftree nft-rec (as-contract tx-sender))
 )
 
 (define-private (add-amount-for-block (blk uint) (amount-ustx uint))
@@ -418,34 +429,6 @@
 
 (define-public (can-claim-nft? (nft-desc (buff 64)) (owner principal) (parent-nft-id uint) (proof { hashes: (list 32 (buff 32)), index: uint }))
     (inner-can-claim-nft? nft-desc owner parent-nft-id proof block-height)
-)
-
-(define-private (inner-claim-nft (nft-desc (buff 64)) (owner principal) (parent-nft-id uint) (proof { hashes: (list 32 (buff 32)), index: uint }) (cur-blk uint))
-    (inner-instantiate-nft
-        (try! (inner-can-claim-nft? nft-desc owner parent-nft-id proof cur-blk)))
-)
-
-;; Claim an NFT off of an existing NFTree.  Requires a proof that the NFT encoded in `nft-desc` is included
-;; in the parent NFT's root hash, via a Merkle proof.
-;; The `hashes` field in the `proof` tuple are the hashes constituting a proof that links the hash of `nft-desc` to the
-;; `data-hash` field of the NFT whose ID is `parent-nft-id`.  The `index` field in `proof` refers to the ith leaf node
-;; in the Merkle tree rooted at the parent NFT's `data-hash` that represents the given `nft-desc`.
-;; Returns the new NFT ID on success
-(define-public (claim-nft (nft-desc (buff 64)) (parent-nft-id uint) (proof { hashes: (list 32 (buff 32)), index: uint }))
-    (inner-claim-nft nft-desc tx-sender parent-nft-id proof block-height)
-)
-
-;; Instantiate an NFTree that will be owned by the contract.
-;; This creates a "root" NFTree from which NFTs can be claimed.
-(define-public (instantiate-nftree (nft-desc (buff 64)))
-    (let (
-        (nft-rec (unwrap! (parse-nft-desc nft-desc) (err ERR_INVALID_NFT_DESC)))
-    )
-        (asserts! (is-eq tx-sender ADMIN)
-            (err ERR_PERMISSION_DENIED)
-        ) 
-        (inner-instantiate-nft nft-rec (as-contract tx-sender))
-    )
 )
 
 ;; stacking
@@ -856,7 +839,7 @@
 ;; Fulfill a buy offer.
 ;; * send the NFT to the buyer in buy-offer
 ;; * send uSTX from escrow to the seller
-;; No validity checking is done.
+;; No validity checking is done; do this in (inner-can-fulfill-buy-offer?)
 (define-private (inner-fulfill-buy-offer (nft-id uint) (nft-desc (buff 64)) (buy-offer { buyer: principal, amount-ustx: uint, expires: uint }) (seller principal))
     (begin
         ;; transfer NFT to new owner
@@ -904,19 +887,28 @@
     )
 )
 
-;; Fulfill a buy order by materializing the NFT it describes and giving it to the buyer
+;; Fulfill a buy order by materializing the NFT it describes and giving it to the buyer.
+;; The owner of the parent NFTree from which this NFT will be instantiated receives a commission.
 (define-private (inner-fulfill-mine-order
                     (nft-desc (buff 64))
                     (nft-rec { tickets: uint, data-hash: (buff 32), size: uint })
+                    (parent-nft-id uint)
                     (buy-offer { buyer: principal, amount-ustx: uint, expires: uint })
                     (miner principal)
                 )
     (let (
         ;; instantiate the NFT and give it to the miner
         (nft-id (unwrap-panic (inner-instantiate-nft nft-rec miner)))
+        (amount-ustx (get amount-ustx buy-offer))
+        (parent-owner (unwrap-panic (nft-get-owner? nftree parent-nft-id)))
     )
-        ;; send the newly-created NFT to the buyer, and claim the buyer's escrowed STX
-        (unwrap-panic (as-contract (stx-transfer? (get amount-ustx buy-offer) tx-sender miner)))
+        ;; miner claims the buyer's escrowed STX, minus the commission: (amount-ustx * (100 - CREATOR_COMMISSION)) / 100
+        (unwrap-panic (as-contract (stx-transfer? (/ (* (- u100 CREATOR_COMMISSION) amount-ustx) u100)  tx-sender miner)))
+
+        ;; parent NFT owner claims commission: (amount-ustx * CREATOR_COMMISSION) / 100
+        (unwrap-panic (as-contract (stx-transfer? (/ (* CREATOR_COMMISSION amount-ustx) u100) tx-sender parent-owner)))
+
+        ;; send the newly-created NFT to the buyer
         (unwrap-panic (nft-transfer? nftree nft-id miner (get buyer buy-offer)))
 
         ;; delete buy offer, which must exist
@@ -941,7 +933,7 @@
     (let (
         (order-data (try! (inner-can-fulfill-mine-order nft-desc tx-sender parent-nft-id proof block-height)))
     )
-        (inner-fulfill-mine-order nft-desc (get nft-rec order-data) (get buy-offer order-data) tx-sender)
+        (inner-fulfill-mine-order nft-desc (get nft-rec order-data) parent-nft-id (get buy-offer order-data) tx-sender)
     )
 )
  
