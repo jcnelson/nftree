@@ -371,7 +371,6 @@ top-level functions to instantiate it on-chain -- `(register-nftree)` and
 
 The only difference between them is that the contract will own the root NFTree
 in the latter case, so no commission will be paid out for the root.
-Once the NFT creator has the outputted NFT descriptor, they can call `(instantiate-nftree)` with it:
 
 Both of these functions are used to mint the whole collection in `/path/to/your/NFTs`.  The NFT project leader(s)
 would call this to instantiate new collections are they are made.  All NFTs
