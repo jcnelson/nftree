@@ -161,8 +161,12 @@ function makeMerkleTree(hashes) {
       next_layer.push(h);
     }
     hashes = next_layer.map(function(h) { return h });
+    if (next_layer.length % 2 === 1 && next_layer.length > 1) {
+      next_layer.push(next_layer[next_layer.length - 1]);
+    }
     tree.push(next_layer);
   }
+  debug(tree);
   return tree;
 }
 
@@ -176,9 +180,15 @@ function makeMerkleProof(merkle_tree, index) {
   for (let i = 0; i < merkle_tree.length - 1; i++) {
     let sibling_hash = undefined;
     if (index % 2 === 0) {
+      if (index + 1 >= merkle_tree[i].length) {
+        throw new Error(`FATAL: index ${index + 1} out of bounds (${merkle_tree[i].length})`);
+      }
       sibling_hash = merkle_tree[i][index + 1];
     }
     else {
+      if (index <= 0) {
+        throw new Error(`FATAL: index must be positive`);
+      }
       sibling_hash = merkle_tree[i][index - 1];
     }
     proof.push(sibling_hash);
@@ -289,19 +299,25 @@ function processOneDirectory(src_root, dest_root) {
 function verifyProof(root_hash, desc_hash, proof) {
   let idx = proof.index;
   let cur_hash = desc_hash;
+  debug(`${cur_hash.toString('hex')} at ${idx}`);
   for (let i = 0; i < proof.hashes.length; i++) {
     const proof_hash = Buffer.from(proof.hashes[i], 'hex');
     const hasher = crypto.createHash('sha512-256');
     if (idx % 2 === 0) {
+      debug(`${cur_hash.toString('hex')} ${proof_hash.toString('hex')}`);
       hasher.update(cur_hash);
       hasher.update(proof_hash);
     }
     else {
+      debug(`${proof_hash.toString('hex')} ${cur_hash.toString('hex')}`);
       hasher.update(proof_hash);
       hasher.update(cur_hash);
     }
     cur_hash = hasher.digest();
+    idx >>= 1;
+    debug(`${cur_hash.toString('hex')}`);
   }
+  debug(`${cur_hash.toString('hex')} == ${root_hash.toString('hex')}`);
   return cur_hash.compare(root_hash) === 0;
 }
 
